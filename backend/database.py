@@ -42,6 +42,7 @@ class Patient(Base):
     doctors = relationship("Doctor", back_populates="patient", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="patient", cascade="all, delete-orphan")
     health_goals = relationship("HealthGoal", back_populates="patient", cascade="all, delete-orphan")
+    risk_snapshots = relationship("RiskSnapshot", back_populates="patient", cascade="all, delete-orphan")
 
 
 class UserSession(Base):
@@ -206,6 +207,21 @@ class DoctorRecommendation(Base):
 
     # Relationships
     patient = relationship("Patient", back_populates="recommendations")
+
+
+class RiskSnapshot(Base):
+    """Monthly risk score snapshot, used to chart real risk trend history over time
+    instead of fabricating one. One row is written per patient per calendar month,
+    the first time /api/risk-insights/{patient_id} is called that month."""
+    __tablename__ = "risk_snapshots"
+
+    id = Column(String, primary_key=True, index=True)
+    patient_id = Column(String, ForeignKey("patients.id"), index=True)
+    month = Column(String, index=True)  # YYYY-MM
+    risk_percentage = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    patient = relationship("Patient", back_populates="risk_snapshots")
 
 
 class DietRecommendation(Base):

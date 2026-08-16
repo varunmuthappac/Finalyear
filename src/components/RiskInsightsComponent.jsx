@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Droplet, ShieldCheck, TrendingUp, CalendarDays, Stethoscope } from 'lucide-react';
-import { getRiskInsights } from '../api';
+import { AlertTriangle, Droplet, ShieldCheck, TrendingUp, TrendingDown, CalendarDays, Stethoscope } from 'lucide-react';
+import { getRiskInsights, getRiskHistory } from '../api';
 
 export default function RiskInsightsComponent({ patientId = 'patient_demo_001' }) {
   const [insights, setInsights] = useState(null);
+  const [riskHistory, setRiskHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -12,8 +13,12 @@ export default function RiskInsightsComponent({ patientId = 'patient_demo_001' }
       setLoading(true);
       setError('');
       try {
-        const data = await getRiskInsights(patientId, 30);
+        const [data, history] = await Promise.all([
+          getRiskInsights(patientId, 30),
+          getRiskHistory(patientId, 6),
+        ]);
         setInsights(data);
+        setRiskHistory(history.history || []);
       } catch (err) {
         setError(err.message || 'Unable to load risk insights right now.');
       } finally {
@@ -157,6 +162,43 @@ export default function RiskInsightsComponent({ patientId = 'patient_demo_001' }
               <div className="flex justify-between"><span>Location</span><span className="font-semibold text-slate-900">{insights?.latest_scan?.location ?? 'Not estimated'}</span></div>
               <div className="flex justify-between"><span>Type</span><span className="font-semibold text-slate-900">{insights?.latest_scan?.stone_type ?? 'unknown'}</span></div>
             </div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <TrendingDown className="w-5 h-5 text-blue-600" />
+              <h3 className="text-xl font-bold text-slate-900">Risk trend</h3>
+            </div>
+            {riskHistory.length > 0 ? (
+              <>
+                <div className="flex items-end justify-between gap-2 h-32">
+                  {riskHistory.map((point) => (
+                    <div key={point.month} className="flex-1 flex flex-col items-center gap-2">
+                      <div
+                        className="w-full rounded-t-lg bg-gradient-to-t from-blue-500 to-cyan-400 relative"
+                        style={{ height: `${Math.max(4, point.risk_percentage)}%` }}
+                      >
+                        <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-xs font-semibold text-slate-700">
+                          {point.risk_percentage}%
+                        </span>
+                      </div>
+                      <span className="text-xs text-slate-500">{point.month}</span>
+                    </div>
+                  ))}
+                </div>
+                {riskHistory.length > 1 && (
+                  <p className="text-sm text-slate-600 mt-4">
+                    {riskHistory[riskHistory.length - 1].risk_percentage <= riskHistory[0].risk_percentage
+                      ? `Risk is down ${(riskHistory[0].risk_percentage - riskHistory[riskHistory.length - 1].risk_percentage).toFixed(1)}% since tracking began.`
+                      : `Risk is up ${(riskHistory[riskHistory.length - 1].risk_percentage - riskHistory[0].risk_percentage).toFixed(1)}% since tracking began — review your hydration and diet compliance.`}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">
+                Risk trend starts accumulating from your first month of tracking. Check back next month to see your progress.
+              </p>
+            )}
           </div>
 
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6">

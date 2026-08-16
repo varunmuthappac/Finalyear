@@ -18,6 +18,7 @@ appointment recommendations.
 | Multi-user accounts (signup/login, hashed passwords, session tokens) | Real, with per-account data isolation |
 | Water intake & meal logging | Real, persisted in SQLite, live in the dashboard |
 | Risk insights / recovery roadmap | Rule-based, computed from *your* tracked data (not fabricated charts) |
+| Risk trend history | Real monthly snapshots, recorded the first time you check risk insights each month — starts accumulating from your first month, not backfilled |
 | Daily health goals | Rule-based by default; optional NVIDIA NIM LLM generation |
 | Appointments | Real booking persistence against the backend |
 
@@ -83,7 +84,7 @@ your own account.
 ## Tests
 
 ```bash
-# Backend (isolated test DB, 28 tests)
+# Backend (isolated test DB, 41 tests)
 cd backend
 venv/bin/python -m pytest tests -q
 

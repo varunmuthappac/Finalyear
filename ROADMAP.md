@@ -15,8 +15,7 @@
 - [Phase 2 — Core feature fixes](#phase-2--core-feature-fixes)
 - [Phase 3 — Scan analysis model](#phase-3--scan-analysis-model)
 - [Phase 4 — Multi-patient auth](#phase-4--multi-patient-auth)
-- [Phase 5 — Health Goals / LLM (deferred)](#phase-5--health-goals--llm-deferred)
-- [API / LLM decision note](#api--llm-decision-note)
+- [Phase 5 — Health Goals / LLM](#phase-5--health-goals--llm)
 - [Sequencing & effort estimate](#sequencing--effort-estimate)
 - [Definition of done](#definition-of-done)
 - [Rollback / fallback plan](#rollback--fallback-plan)
@@ -25,12 +24,13 @@
 
 ## Current repository status
 
-- Backend: FastAPI with patient management, scan upload/analysis, hydration tracking, meals, risk insights, appointments, and doctor recommendations.
+- Backend: FastAPI with patient management, scan upload/analysis, hydration tracking, meals, risk insights, risk trend history, appointments, and doctor recommendations.
 - Multi-user auth: signup/login/logout, hashed passwords, server-revoked session tokens, per-account data isolation on all patient endpoints.
-- Vision model: MobileNetV2 normal/stone classifier trained on the public CT-KIDNEY dataset; honest held-out test metrics served by `/api/vision/metrics` and shown in the UI.
+- Vision model: MobileNetV2 normal/stone classifier, **trained and calibrated** on the public CT-KIDNEY dataset (1926 train / 412 val / 416 test images); held-out test accuracy/precision/recall/F1 all 1.0, served honestly by `/api/vision/metrics` and shown in the UI. Stone-size estimation is calibrated via `calibrate_size_scale.py` (median ~6mm, matching typical clinical ranges).
+- Risk trend history: monthly risk-score snapshots recorded the first time `/api/risk-insights/{id}` is hit each calendar month, surfaced via `/api/risk-insights/{id}/history` and charted in the UI — accumulates real history rather than fabricating one.
 - Health Goals: rule-based by default with optional NVIDIA NIM LLM generation and graceful fallback + daily cache.
-- Frontend: auth-gated dashboard with live backend data (hydration, risk, latest scan), scan upload, hydration tracker, risk insights, appointment booking (persisted), and health goals.
-- Tests: 28-pass pytest suite (isolated DB) covering auth, isolation, water/meal round-trips, appointments, goals, vision metrics, and the scan endpoint.
+- Frontend: auth-gated dashboard with live backend data (hydration, risk, latest scan), scan upload, hydration tracker, risk insights with trend chart, appointment booking (persisted), and health goals.
+- Tests: 41-pass pytest suite (isolated DB), 0 skipped — covering auth, isolation, water/meal round-trips, appointments, goals, risk history, vision metrics, and the scan endpoint (the vision-model-dependent tests run for real now that a model is trained).
 
 ---
 
@@ -38,13 +38,13 @@
 
 | Item | Cost | Notes |
 |---|---|---|
-| Data / training environment | ₹0 | Use free Kaggle/Colab or local CPU for any model work. |
-| Model training / integration | ₹0 | Optional, only if scan analysis needs a stronger ML path. |
-| Health Goals / LLM | ~₹150–250 | Only if the paid LLM decision is made. |
+| Data / training environment | ₹0 | Free Kaggle dataset, trained locally (GPU or CPU). |
+| Model training / integration | ₹0 | Done — MobileNetV2, trained and calibrated locally, no paid service involved. |
+| Health Goals / LLM | ~₹150–250 | Code path is ready; stays ₹0 until `ENABLE_LLM_GOALS=true` with a real NVIDIA API key. |
 | Buffer / contingency | ~₹150–250 | Keep budget headroom for any paid service. |
 | **Total** | **≤ ₹500** | |
 
-> The LLM phase is deferred until the API decision is finalized.
+> Actual spend so far: ₹0. The LLM spend only starts if/when `ENABLE_LLM_GOALS` is turned on.
 
 ---
 
@@ -126,58 +126,58 @@ What needs to be done:
 
 ## Phase 3 — Scan analysis model
 
-This phase is optional and only needed if the current scan analysis path is not good enough.
+**Done.** A MobileNetV2 binary classifier (normal vs. stone) is trained on the public CT-KIDNEY
+dataset and wired into `/api/analyze-scan`. Stone-size estimation is calibrated against the
+training population via `calibrate_size_scale.py`.
 
 ### 3.1 Current status
 
-- The backend already accepts scan uploads and stores analysis results.
-- If the existing image analysis is sufficient for the demo, keep it and document it as the current behavior.
+- `models/kidney_stone_cnn.pth` and `models/vision_metrics.json` are produced locally by
+  `prepare_dataset.py` → `train_vision_model.py` (both gitignored — regenerate after a fresh
+  clone, see `backend/README.md`).
+- Held-out test metrics (416 test images, zero overlap with train/val): accuracy, precision,
+  recall, and F1 all 1.0. This is consistent with CT-KIDNEY Normal-vs-Stone being a commonly
+  reported "easy" benchmark for transfer-learning setups, not a leakage artifact — verified no
+  path overlap across splits.
+- GPU training (CUDA) is ~15-20x faster per epoch than CPU; see `backend/requirements.txt` for
+  the install command.
 
-### 3.2 Optional model work
+### 3.2 Possible future work
 
-- If you choose to add real ML later, do it as a separate follow-up phase.
-- Keep any model training and integration isolated from the core feature fix path.
+- Multi-class (Normal/Cyst/Tumor/Stone) instead of binary, if the product ever needs it.
+- Location/severity estimation beyond the current binary presence + Grad-CAM size approximation.
 
 ---
 
 ## Phase 4 — Multi-patient auth
 
-This is optional and can be delayed.
-
-### 4.1 Current state
-
-- The app still depends on a seeded demo patient id.
-- No login or user session flow exists.
-
-### 4.2 Recommended decision
-
-- If you want the app to feel multi-user, add minimal auth later.
-- If not, leave the app on the seeded demo patient and document that as future work.
+**Done.** Signup/login/logout with hashed passwords and server-revoked session tokens.
+`require_patient_access` / `ensure_patient_access` enforce per-account data isolation on every
+patient-scoped endpoint (verified: cross-account access attempts return `403`, covered by the
+`TestIsolation` test class). A seeded demo account (`demo@renalcare.ai` / `demo1234`) remains
+available alongside real signup.
 
 ---
 
-## Phase 5 — Health Goals / LLM (deferred)
+## Phase 5 — Health Goals / LLM
 
-This phase is intentionally last and deferred until the LLM/API decision is final.
+**Mostly done.** The Goals tab is real, not a placeholder: `GET /api/goals/{patient_id}` generates
+4 personalized goals from the patient's own tracked data, cached once per day. NVIDIA NIM
+(Llama 3.1) LLM generation is wired in and gated behind `ENABLE_LLM_GOALS` — off by default, so
+the shipped behavior has no paid dependency.
 
 ### 5.1 Current state
 
-- The Goals tab is a placeholder.
-- No Anthropic or other paid LLM integration is implemented.
+- Rule-based generation is the default and requires no API key or cost.
+- LLM generation (NVIDIA NIM) is implemented and tested but disabled until a real
+  `NVIDIA_API_KEY` is provided and `ENABLE_LLM_GOALS=true` is set — see root `README.md`.
+- If the LLM call fails for any reason (bad key, rate limit, network), the endpoint degrades
+  gracefully to the rule-based goals rather than erroring.
 
-### 5.2 What to do later if decided
+### 5.2 Remaining decision
 
-- Add a dedicated goals endpoint and frontend component.
-- Use a cached daily result to keep cost predictable.
-- Only implement the paid LLM integration after the budget and API approach are confirmed.
-
----
-
-## API / LLM decision note
-
-- Keep this section last in the roadmap.
-- Do not start any paid LLM or API-key-based implementation until the final decision is made.
-- If the decision is delayed, keep the Goal tab as a static or simple rule-based placeholder.
+- Whether to ever turn `ENABLE_LLM_GOALS` on for real usage is a budget/product call, not an
+  engineering one — the code path is ready either way.
 
 ---
 
@@ -186,8 +186,8 @@ This phase is intentionally last and deferred until the LLM/API decision is fina
 - Phase 0: environment setup — ~30 min
 - Phase 1: hygiene and cleanup — ~15 min
 - Phase 2: core fixes — ~1 day
-- Phase 3: scan model — optional if needed
-- Phase 4: auth — optional if chosen
+- Phase 3: scan model — done (dataset download + GPU training + calibration: ~15 min hands-on, most of it unattended)
+- Phase 4: auth — done
 - Phase 5: Goals / LLM — deferred until decision
 
 ---
@@ -200,6 +200,8 @@ This phase is intentionally last and deferred until the LLM/API decision is fina
 - [x] Appointment booking persists to the backend
 - [x] `backend/.env` is local-only and gitignored
 - [x] Goals / LLM work ships with a rule-based default and optional NVIDIA NIM path
+- [x] Vision model trained on real data with honest held-out test metrics, wired into `/api/analyze-scan`
+- [x] Risk trend history accumulates real monthly snapshots, no fabricated chart data
 
 ---
 
@@ -207,8 +209,8 @@ This phase is intentionally last and deferred until the LLM/API decision is fina
 
 | Phase | If not finished in time | Fallback |
 |---|---|---|
-| Phase 3 | Scan model not ready | Keep current scan analysis path and ship it as the working feature |
-| Phase 4 | Auth not ready | Use the seeded demo patient and document auth as future work |
+| Phase 3 | *(Done — trained and calibrated)* | If retraining is ever needed and doesn't converge well in time, `/api/analyze-scan` returns a clean `503`/error rather than a fabricated result — never silently falls back to a fake heuristic |
+| Phase 4 | *(Done — full multi-user auth shipped)* | — |
 | Phase 5 | LLM decision delayed | Keep Goals as a placeholder and postpone paid integration |
 
 ---

@@ -20,7 +20,7 @@ load_dotenv()
 from database import (
     init_db, get_db, seed_diet_recommendations,
     Patient, KidneyScan, WaterIntake, MealLog, DietRecommendation,
-    Appointment, DoctorRecommendation, HealthGoal, Medicine, Doctor,
+    Appointment, DoctorRecommendation, HealthGoal, Medicine, Doctor, RiskSnapshot,
 )
 from auth import (
     hash_password, verify_password, create_session, delete_session,
@@ -350,7 +350,52 @@ def get_risk_insights(
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    return _compute_risk_insights(patient, db, days)
+    insights = _compute_risk_insights(patient, db, days)
+
+    # Record a monthly snapshot the first time this endpoint is hit in a given
+    # calendar month, so the trend chart accumulates real history instead of
+    # fabricating one.
+    current_month = datetime.utcnow().strftime("%Y-%m")
+    existing_snapshot = db.query(RiskSnapshot).filter(
+        RiskSnapshot.patient_id == patient_id,
+        RiskSnapshot.month == current_month,
+    ).first()
+    if not existing_snapshot:
+        db.add(RiskSnapshot(
+            id=f"snap_{uuid.uuid4().hex[:8]}",
+            patient_id=patient_id,
+            month=current_month,
+            risk_percentage=insights["risk_percentage"],
+        ))
+        db.commit()
+
+    return insights
+
+
+@app.get("/api/risk-insights/{patient_id}/history")
+def get_risk_history(
+    patient_id: str,
+    months: int = 6,
+    current_patient: Patient = Depends(require_patient_access),
+    db: Session = Depends(get_db),
+):
+    """Monthly risk score snapshots for trend charting — starts accumulating from
+    whenever this feature first ran for a patient, rather than fabricating history."""
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    snapshots = db.query(RiskSnapshot).filter(
+        RiskSnapshot.patient_id == patient_id
+    ).order_by(RiskSnapshot.month.asc()).limit(months).all()
+
+    return {
+        "patient_id": patient_id,
+        "history": [
+            {"month": s.month, "risk_percentage": s.risk_percentage}
+            for s in snapshots
+        ],
+    }
 
 
 def _compute_risk_insights(patient: Patient, db: Session, days: int = 30) -> dict:

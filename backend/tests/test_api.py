@@ -182,6 +182,11 @@ class TestIsolation:
         r = client.get(f"/api/goals/{a['patient']['id']}", headers=hdr_b)
         assert r.status_code == 403
 
+    def test_cannot_read_other_patients_risk_history(self, client):
+        a, _, hdr_a, hdr_b = self._two_users(client)
+        r = client.get(f"/api/risk-insights/{a['patient']['id']}/history", headers=hdr_b)
+        assert r.status_code == 403
+
 
 # ============= Water Intake Tests =============
 
@@ -563,6 +568,27 @@ class TestHealth:
         assert "risk_level" in body
         assert "roadmap" in body
         assert "guidelines" in body
+
+    def test_risk_history_records_current_month_snapshot(self, client, auth_headers):
+        pid = auth_headers["patient_id"]
+        # Hitting risk-insights should record a snapshot for the current month.
+        insights = client.get(f"/api/risk-insights/{pid}?days=30", headers=auth_headers)
+        assert insights.status_code == 200
+
+        r = client.get(f"/api/risk-insights/{pid}/history?months=6", headers=auth_headers)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["patient_id"] == pid
+        assert len(body["history"]) == 1
+        assert body["history"][0]["risk_percentage"] == insights.json()["risk_percentage"]
+
+    def test_risk_history_does_not_duplicate_within_same_month(self, client, auth_headers):
+        pid = auth_headers["patient_id"]
+        client.get(f"/api/risk-insights/{pid}?days=30", headers=auth_headers)
+        client.get(f"/api/risk-insights/{pid}?days=30", headers=auth_headers)
+
+        r = client.get(f"/api/risk-insights/{pid}/history", headers=auth_headers)
+        assert len(r.json()["history"]) == 1
 
 
 # ============= Dashboard Summary Tests =============

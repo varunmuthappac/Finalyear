@@ -139,6 +139,12 @@ export const getRiskInsights = async (patientId, days = 30) => {
   return response.json();
 };
 
+export const getRiskHistory = async (patientId, months = 6) => {
+  const response = await request(`${API_BASE_URL}/risk-insights/${patientId}/history?months=${months}`);
+  if (!response.ok) throw new Error(`API Error: ${response.status}`);
+  return response.json();
+};
+
 export const resetWaterIntakeForDay = async (patientId, date = null) => {
   let url = `${API_BASE_URL}/water-intake/${patientId}/reset`;
   if (date) url += `?date=${date}`;
